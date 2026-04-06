@@ -116,7 +116,7 @@ INDEX_HTML = """<!DOCTYPE html>
   legend { padding: 0 0.35rem; margin: 0 auto; }
   label { display: block; margin: 0.35rem 0; cursor: pointer; }
   .row { margin: 0.5rem 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
-  button, .btn { font-size: 0.95rem; padding: 0.35rem 0.75rem; background: #e8e8e8; border: 1px solid #999; cursor: pointer; color: #222; }
+  button { font-size: 0.95rem; padding: 0.35rem 0.75rem; background: #e8e8e8; border: 1px solid #999; cursor: pointer; color: #222; }
   button:disabled { opacity: 0.5; cursor: default; }
   #status { min-height: 1.4em; margin: 0.75rem auto; max-width: 24rem; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0.75rem auto; width: 100%; max-width: 12rem; }
@@ -300,7 +300,6 @@ def configure():
     session["current_player_index"] = start
 
     board = _load_board()
-    winner = board.check_winner()
 
     # Human vs AI with human as O: AI (X) opens — same as CLI after setup()
     if mode == 1 and isinstance(players[start], AIPlayer):
