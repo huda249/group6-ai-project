@@ -1,7 +1,4 @@
-"""
-Minimal web UI for the existing Tic Tac Toe game (same modes as src/main.py).
-Run: python src/web_app.py  (from repo root)  or  cd src && python web_app.py
-"""
+
 import os
 import sys
 
@@ -24,7 +21,6 @@ class _GameView:
 
 
 def _players_and_start(mode, human_letter=None):
-    """Match main.py Game.setup() player order and starting index."""
     if mode == 1:
         hl = human_letter.upper()
         ai_letter = "O" if hl == "X" else "X"
