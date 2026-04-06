@@ -1,16 +1,19 @@
+
 import os
 import sys
-from flask import Flask, Response, jsonify, request, session
 
 _SRC = os.path.dirname(os.path.abspath(__file__))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from flask import Flask, Response, jsonify, request, session
+
 from board import Board
 from player import AIPlayer, HumanPlayer
 
 app = Flask(__name__)
-app.secret_key = "sofe3720-secret-key"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-tic-tac-toe-key")
+
 
 class _GameView:
     def __init__(self, board):
@@ -18,17 +21,16 @@ class _GameView:
 
 
 def _players_and_start(mode, human_letter=None):
-    if mode == 1: 
-        hl = (human_letter or "X").upper()
+    if mode == 1:
+        hl = human_letter.upper()
         ai_letter = "O" if hl == "X" else "X"
-        players = [HumanPlayer(hl), AIPlayer(ai_letter)]
-        # If human chose O, AI is X and goes first
+        players = [HumanPlayer(hl), AIPlayer(ai_letter, "hard")]
         start = 1 if hl == "O" else 0
         return players, start
-    elif mode == 2:
-        return [AIPlayer("X"), AIPlayer("O")], 0
-    else:
-        return [HumanPlayer("X"), HumanPlayer("O")], 0
+    if mode == 2:
+        return [AIPlayer("X", "hard"), AIPlayer("O", "hard")], 0
+    return [HumanPlayer("X"), HumanPlayer("O")], 0
+
 
 def _load_board():
     b = Board()
@@ -36,24 +38,28 @@ def _load_board():
         b.grid = [row[:] for row in session["grid"]]
     return b
 
+
 def _save_board(board):
     session["grid"] = [row[:] for row in board.grid]
+
 
 def _state():
     board = _load_board()
     winner = board.check_winner()
-    done = winner is not None
+    done = winner in ("X", "O", "Draw")
     mode = session.get("mode")
     phase = session.get("phase", "setup")
-    
-    cur_idx = session.get("current_player_index", 0)
+    players = []
+    cur_idx = 0
+    if mode and phase == "playing":
+        hl = session.get("human_letter")
+        players, _ = _players_and_start(mode, hl)
+        cur_idx = session.get("current_player_index", 0)
+
     cur_letter = None
     human_turn = False
     need_ai_step = False
-
     if mode and phase == "playing" and not done:
-        hl = session.get("human_letter", "X")
-        players, _ = _players_and_start(mode, hl)
         cur = players[cur_idx]
         cur_letter = cur.letter
         human_turn = isinstance(cur, HumanPlayer)
@@ -62,6 +68,7 @@ def _state():
     return {
         "phase": phase,
         "mode": mode,
+        "human_letter": session.get("human_letter"),
         "board": board.grid,
         "winner": winner,
         "done": done,
@@ -71,295 +78,311 @@ def _state():
     }
 
 
+def _run_ai_move(board, players, cur_idx):
+    cur = players[cur_idx]
+    row, col = cur.get_move(_GameView(board))
+    board.make_move(row, col, cur.letter)
+
+
 INDEX_HTML = """<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Tic Tac Toe</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Syncopate:wght@700&family=JetBrains+Mono:wght@400;700&display=swap');
-
-        :root {
-            --teal-main: #008080;
-            --teal-bright: #00f2f2;
-            --teal-dark: #004d4d;
-            --bg-dark: #0a0a0a;
-            --card-bg: #141414;
-            --text-light: #e0f2f2;
-        }
-
-        body {
-            font-family: 'JetBrains Mono', monospace;
-            background-color: var(--bg-dark);
-            color: var(--text-light);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            text-transform: uppercase;
-        }
-
-        h1 {
-            font-family: 'Syncopate', sans-serif;
-            font-size: 1.8rem;
-            letter-spacing: 4px;
-            color: var(--teal-bright);
-            margin-bottom: 2rem;
-            text-shadow: 0 0 10px rgba(0, 242, 242, 0.3);
-        }
-
-        #setup, #play {
-            background: var(--card-bg);
-            padding: 1.5rem;
-            border: 2px solid var(--teal-main);
-            width: 100%;
-            max-width: 320px;
-            box-shadow: 8px 8px 0px var(--teal-dark);
-        }
-
-        fieldset {
-            border: 1px solid var(--teal-dark);
-            margin-bottom: 1rem;
-            padding: 0.8rem;
-            text-align: left;
-        }
-
-        legend { color: var(--teal-bright); font-weight: bold; padding: 0 5px; font-size: 0.7rem; }
-
-        label { display: block; font-size: 0.7rem; margin: 8px 0; cursor: pointer; }
-
-        button {
-            width: 100%;
-            padding: 0.8rem;
-            background: transparent;
-            border: 2px solid var(--teal-main);
-            color: var(--teal-bright);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        button:hover:not(:disabled) {
-            background: var(--teal-main);
-            color: var(--bg-dark);
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            margin: 1.5rem 0;
-            border: 2px solid var(--teal-dark);
-            width: 240px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .cell {
-            width: 80px;
-            height: 80px;
-            font-size: 2rem;
-            font-family: 'Syncopate', sans-serif;
-            background: var(--card-bg);
-            border: 1px solid var(--teal-dark);
-            color: var(--teal-bright);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #status {
-            font-size: 0.8rem;
-            color: var(--teal-bright);
-            margin-bottom: 1rem;
-            border-left: 3px solid var(--teal-bright);
-            padding-left: 10px;
-            text-align: left;
-            min-height: 1.2rem;
-        }
-
-        .hidden { display: none; }
-        .row { margin-top: 10px; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tic Tac Toe</title>
+<style>
+  html { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: inherit; }
+  body {
+    font-family: system-ui, Segoe UI, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    color: #222;
+    background: #fafafa;
+    text-align: center;
+  }
+  h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem; width: 100%; max-width: 24rem; }
+  #setup, #play { width: 100%; max-width: 24rem; }
+  fieldset { border: 1px solid #ccc; margin: 0 auto 1rem; padding: 0.75rem; background: #fff; text-align: center; }
+  legend { padding: 0 0.35rem; margin: 0 auto; }
+  label { display: block; margin: 0.35rem 0; cursor: pointer; }
+  .row { margin: 0.5rem 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
+  button { font-size: 0.95rem; padding: 0.35rem 0.75rem; background: #e8e8e8; border: 1px solid #999; cursor: pointer; color: #222; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { min-height: 1.4em; margin: 0.75rem auto; max-width: 24rem; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0.75rem auto; width: 100%; max-width: 12rem; }
+  .cell { min-height: 3.25rem; font-size: 1.35rem; background: #fff; border: 1px solid #bbb; cursor: pointer; color: #111; }
+  .cell:disabled { cursor: default; background: #eee; }
+  .hidden { display: none; }
+</style>
 </head>
 <body>
-    <h1>Tic Tac Toe</h1>
+<h1>Tic Tac Toe</h1>
 
-    <div id="setup">
-        <fieldset>
-            <legend>Mode</legend>
-            <label><input type="radio" name="mode" value="1" checked onchange="toggleXO()"> Human vs AI</label>
-            <label><input type="radio" name="mode" value="2" onchange="toggleXO()"> AI vs AI (demo)</label>
-            <label><input type="radio" name="mode" value="3" onchange="toggleXO()"> Human vs Human</label>
-        </fieldset>
+<div id="setup">
+  <fieldset>
+    <legend>Mode</legend>
+    <label><input type="radio" name="mode" value="1" checked> Human vs AI</label>
+    <label><input type="radio" name="mode" value="2"> AI vs AI (demo)</label>
+    <label><input type="radio" name="mode" value="3"> Human vs Human</label>
+  </fieldset>
+  <fieldset id="xoPick">
+    <legend>Play as (Human vs AI)</legend>
+    <label><input type="radio" name="hl" value="X" checked> X</label>
+    <label><input type="radio" name="hl" value="O"> O</label>
+  </fieldset>
+  <button type="button" id="start">Start game</button>
+</div>
 
-        <fieldset id="xoPick">
-            <legend>Play as</legend>
-            <label><input type="radio" name="hl" value="X" checked> X (Goes First)</label>
-            <label><input type="radio" name="hl" value="O"> O (AI Goes First)</label>
-        </fieldset>
+<div id="play" class="hidden">
+  <div id="status"></div>
+  <div class="grid" id="board"></div>
+  <div class="row">
+    <button type="button" id="aiStep" class="hidden">AI move</button>
+  </div>
+  <div class="row">
+    <button type="button" id="newGame">New game</button>
+  </div>
+</div>
 
-        <button id="start">Start game</button>
-    </div>
+<script>
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opts || {}));
+  const t = await r.text();
+  let j = null;
+  try { j = JSON.parse(t); } catch (e) {}
+  if (!r.ok) throw new Error(j && j.error ? j.error : t);
+  return j;
+}
 
-    <div id="play" class="hidden">
-        <div id="status"></div>
-        <div class="grid" id="board"></div>
-        <button id="aiStep" class="hidden">AI move</button>
-        <div class="row">
-            <button id="newGame">New game</button>
-        </div>
-    </div>
+function modeValue() {
+  const m = document.querySelector('input[name="mode"]:checked');
+  return m ? parseInt(m.value, 10) : 1;
+}
 
-    <script>
-        function toggleXO() {
-            const mode = document.querySelector('input[name="mode"]:checked').value;
-            const xoField = document.getElementById('xoPick');
-            // Only show X/O choice for Human vs AI
-            xoField.classList.toggle('hidden', mode !== "1");
-        }
+function hlValue() {
+  const h = document.querySelector('input[name="hl"]:checked');
+  return h ? h.value : 'X';
+}
 
-        async function api(path, method='GET', body=null) {
-            const opts = { method, headers: {'Content-Type': 'application/json'}};
-            if (body) opts.body = JSON.stringify(body);
-            const r = await fetch(path, opts);
-            return r.json();
-        }
+function render(s) {
+  const setupEl = document.getElementById('setup');
+  const playEl = document.getElementById('play');
+  const status = document.getElementById('status');
+  const boardEl = document.getElementById('board');
+  const aiStep = document.getElementById('aiStep');
+  const xoPick = document.getElementById('xoPick');
 
-        function render(s) {
-            const setup = document.getElementById('setup');
-            const play = document.getElementById('play');
-            const boardEl = document.getElementById('board');
-            const status = document.getElementById('status');
+  document.querySelectorAll('input[name="mode"]').forEach(function (el) {
+    el.onchange = function () { xoPick.classList.toggle('hidden', modeValue() !== 1); };
+  });
+  xoPick.classList.toggle('hidden', modeValue() !== 1);
 
-            if (s.phase === 'setup') {
-                setup.classList.remove('hidden');
-                play.classList.add('hidden');
-                toggleXO();
-                return;
-            }
+  if (s.phase === 'setup') {
+    setupEl.classList.remove('hidden');
+    playEl.classList.add('hidden');
+    return;
+  }
+  setupEl.classList.add('hidden');
+  playEl.classList.remove('hidden');
 
-            setup.classList.add('hidden');
-            play.classList.remove('hidden');
-            boardEl.innerHTML = '';
+  boardEl.innerHTML = '';
+  const done = s.done;
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      const ch = s.board[r][c];
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cell';
+      btn.textContent = ch === ' ' ? '' : ch;
+      const canClick = s.human_turn && !done && ch === ' ';
+      btn.disabled = !canClick;
+      if (canClick) btn.addEventListener('click', function () { move(r, c); });
+      boardEl.appendChild(btn);
+    }
+  }
 
-            s.board.forEach((row, rIdx) => {
-                row.forEach((cell, cIdx) => {
-                    const btn = document.createElement('button');
-                    btn.className = 'cell';
-                    btn.textContent = cell === ' ' ? '' : cell;
-                    if (s.human_turn && !s.done && cell === ' ') {
-                        btn.onclick = () => move(rIdx, cIdx);
-                    } else {
-                        btn.disabled = true;
-                    }
-                    boardEl.appendChild(btn);
-                });
-            });
+  aiStep.classList.toggle('hidden', !s.need_ai_step || done);
+  aiStep.disabled = done;
 
-            document.getElementById('aiStep').classList.toggle('hidden', !s.need_ai_step || s.done);
-            
-            if (s.done) {
-                status.textContent = s.winner === 'Draw' ? "It's a draw." : s.winner + " wins.";
-            } else {
-                status.textContent = s.current_letter + "'s turn.";
-            }
-        }
+  let msg = '';
+  if (s.winner === 'Draw') msg = "It's a draw.";
+  else if (s.winner === 'X' || s.winner === 'O') msg = s.winner + ' wins.';
+  else if (s.need_ai_step) msg = 'AI vs AI — click “AI move” for the next play.';
+  else if (s.current_letter) msg = s.current_letter + "'s turn.";
+  status.textContent = msg;
+}
 
-        async function move(r, c) { render(await api('/api/move', 'POST', {row: r, col: c})); }
-        
-        document.getElementById('start').onclick = async () => {
-            const mode = document.querySelector('input[name="mode"]:checked').value;
-            const hl = document.querySelector('input[name="hl"]:checked').value;
-            render(await api('/api/configure', 'POST', {mode: mode, human_letter: hl}));
-        };
+async function move(row, col) {
+  const s = await api('/api/move', { method: 'POST', body: JSON.stringify({ row: row, col: col }) });
+  render(s);
+}
 
-        document.getElementById('aiStep').onclick = async () => render(await api('/api/ai_step', 'POST'));
-        document.getElementById('newGame').onclick = async () => render(await api('/api/reset', 'POST'));
+document.getElementById('aiStep').addEventListener('click', async function () {
+  const s = await api('/api/ai_step', { method: 'POST', body: '{}' });
+  render(s);
+});
 
-        (async () => render(await api('/api/state')))();
-    </script>
+document.getElementById('start').addEventListener('click', async function () {
+  const mode = modeValue();
+  const body = { mode: mode };
+  if (mode === 1) body.humanLetter = hlValue();
+  const s = await api('/api/configure', { method: 'POST', body: JSON.stringify(body) });
+  render(s);
+});
+
+document.getElementById('newGame').addEventListener('click', async function () {
+  const s = await api('/api/reset', { method: 'POST' });
+  render(s);
+});
+
+(async function init() {
+  const s = await api('/api/state', { method: 'GET' });
+  render(s);
+})();
+</script>
 </body>
 </html>
 """
 
 
 @app.route("/")
-def index(): return Response(INDEX_HTML, mimetype="text/html")
+def index():
+    return Response(INDEX_HTML, mimetype="text/html; charset=utf-8")
 
-@app.route("/api/state")
-def get_state(): return jsonify(_state())
 
-@app.route("/api/configure", methods=["POST"])
-def configure():
-    data = request.json
-    mode = int(data['mode'])
-    hl = data.get('human_letter', 'X')
-    
-    session.update({
-        "mode": mode, 
-        "phase": "playing", 
-        "human_letter": hl,
-        "current_player_index": 0
-    })
-    
-    board = Board()
-    _save_board(board)
-    
-    players, start = _players_and_start(mode, hl)
-    session["current_player_index"] = start
-    
-    # If it's Human vs AI and the first player is the AI (happens if human picks O)
-    if mode == 1 and isinstance(players[start], AIPlayer):
-        row, col = players[start].get_move(_GameView(board))
-        board.make_move(row, col, players[start].letter)
-        _save_board(board)
-        session["current_player_index"] = 1 - start
-
+@app.route("/api/state", methods=["GET"])
+def get_state():
+    if "phase" not in session:
+        session["phase"] = "setup"
     return jsonify(_state())
 
-@app.route("/api/move", methods=["POST"])
-def move():
-    data = request.json
-    board = _load_board()
-    mode = session.get('mode')
-    hl = session.get('human_letter', 'X')
-    idx = session.get('current_player_index')
-    
-    players, _ = _players_and_start(mode, hl)
-    
-    if board.make_move(data['row'], data['col'], players[idx].letter):
-        session['current_player_index'] = 1 - idx
-        _save_board(board)
-        
-        # If playing against AI, trigger AI move immediately
-        if mode == 1 and not board.check_winner():
-            players_updated, _ = _players_and_start(mode, hl)
-            new_idx = session['current_player_index']
-            ai_move = players_updated[new_idx].get_move(_GameView(board))
-            board.make_move(ai_move[0], ai_move[1], players_updated[new_idx].letter)
-            _save_board(board)
-            session['current_player_index'] = 1 - new_idx
-            
-    return jsonify(_state())
-
-@app.route("/api/ai_step", methods=["POST"])
-def ai_step():
-    board = _load_board()
-    idx = session.get('current_player_index')
-    players, _ = _players_and_start(2) # AI vs AI mode
-    ai_move = players[idx].get_move(_GameView(board))
-    board.make_move(ai_move[0], ai_move[1], players[idx].letter)
-    _save_board(board)
-    session['current_player_index'] = 1 - idx
-    return jsonify(_state())
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
     session.clear()
+    session["phase"] = "setup"
     return jsonify(_state())
 
+
+@app.route("/api/configure", methods=["POST"])
+def configure():
+    data = request.get_json(silent=True) or {}
+    try:
+        mode = int(data["mode"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "mode must be 1, 2, or 3"}), 400
+    if mode not in (1, 2, 3):
+        return jsonify({"error": "mode must be 1, 2, or 3"}), 400
+
+    human_letter = None
+    if mode == 1:
+        hl = (data.get("humanLetter") or data.get("human_letter") or "X").upper()
+        if hl not in ("X", "O"):
+            return jsonify({"error": "humanLetter must be X or O"}), 400
+        human_letter = hl
+
+    session["mode"] = mode
+    session["human_letter"] = human_letter
+    session["phase"] = "playing"
+    b = Board()
+    session["grid"] = [row[:] for row in b.grid]
+    players, start = _players_and_start(mode, human_letter or "X")
+    session["current_player_index"] = start
+
+    board = _load_board()
+
+    # Human vs AI with human as O: AI (X) opens — same as CLI after setup()
+    if mode == 1 and isinstance(players[start], AIPlayer):
+        _run_ai_move(board, players, start)
+        _save_board(board)
+        winner = board.check_winner()
+        if winner not in ("X", "O", "Draw"):
+            session["current_player_index"] = 1 - start
+
+    return jsonify(_state())
+
+
+@app.route("/api/move", methods=["POST"])
+def move():
+    if session.get("phase") != "playing":
+        return jsonify({"error": "start a game first"}), 400
+
+    data = request.get_json(silent=True) or {}
+    try:
+        row = int(data["row"])
+        col = int(data["col"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "expected row and col"}), 400
+
+    mode = session["mode"]
+    hl = session.get("human_letter")
+    players, _ = _players_and_start(mode, hl or "X")
+    idx = session["current_player_index"]
+    board = _load_board()
+
+    winner = board.check_winner()
+    if winner in ("X", "O", "Draw"):
+        return jsonify(_state())
+
+    cur = players[idx]
+    if not isinstance(cur, HumanPlayer):
+        return jsonify({"error": "not human's turn"}), 400
+
+    if not board.make_move(row, col, cur.letter):
+        return jsonify({"error": "invalid move"}), 400
+
+    _save_board(board)
+    winner = board.check_winner()
+    if winner in ("X", "O", "Draw"):
+        return jsonify(_state())
+
+    session["current_player_index"] = 1 - idx
+    idx2 = session["current_player_index"]
+    next_p = players[idx2]
+
+    if isinstance(next_p, AIPlayer):
+        _run_ai_move(board, players, idx2)
+        _save_board(board)
+        winner = board.check_winner()
+        if winner not in ("X", "O", "Draw"):
+            session["current_player_index"] = 1 - idx2
+
+    return jsonify(_state())
+
+
+@app.route("/api/ai_step", methods=["POST"])
+def ai_step():
+    if session.get("phase") != "playing":
+        return jsonify({"error": "start a game first"}), 400
+    if session.get("mode") != 2:
+        return jsonify({"error": "AI step only for AI vs AI mode"}), 400
+
+    players, _ = _players_and_start(2, None)
+    idx = session["current_player_index"]
+    board = _load_board()
+
+    winner = board.check_winner()
+    if winner in ("X", "O", "Draw"):
+        return jsonify(_state())
+
+    cur = players[idx]
+    if not isinstance(cur, AIPlayer):
+        return jsonify({"error": "not an AI turn"}), 400
+
+    _run_ai_move(board, players, idx)
+    _save_board(board)
+    winner = board.check_winner()
+    if winner not in ("X", "O", "Draw"):
+        session["current_player_index"] = 1 - idx
+
+    return jsonify(_state())
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=True)
