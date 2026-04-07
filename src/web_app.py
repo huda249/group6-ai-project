@@ -1,10 +1,4 @@
-
 import os
-import sys
-
-_SRC = os.path.dirname(os.path.abspath(__file__))
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
 
 from flask import Flask, Response, jsonify, request, session
 
@@ -153,11 +147,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <script>
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opts || {}));
-  const t = await r.text();
-  let j = null;
-  try { j = JSON.parse(t); } catch (e) {}
-  if (!r.ok) throw new Error(j && j.error ? j.error : t);
-  return j;
+  return r.json();
 }
 
 function modeValue() {
@@ -177,11 +167,6 @@ function render(s) {
   const boardEl = document.getElementById('board');
   const aiStep = document.getElementById('aiStep');
   const xoPick = document.getElementById('xoPick');
-
-  document.querySelectorAll('input[name="mode"]').forEach(function (el) {
-    el.onchange = function () { xoPick.classList.toggle('hidden', modeValue() !== 1); };
-  });
-  xoPick.classList.toggle('hidden', modeValue() !== 1);
 
   if (s.phase === 'setup') {
     setupEl.classList.remove('hidden');
@@ -209,11 +194,12 @@ function render(s) {
 
   aiStep.classList.toggle('hidden', !s.need_ai_step || done);
   aiStep.disabled = done;
+  xoPick.classList.toggle('hidden', modeValue() !== 1);
 
   let msg = '';
   if (s.winner === 'Draw') msg = "It's a draw.";
   else if (s.winner === 'X' || s.winner === 'O') msg = s.winner + ' wins.';
-  else if (s.need_ai_step) msg = 'AI vs AI — click “AI move” for the next play.';
+  else if (s.need_ai_step) msg = 'AI vs AI, click AI move for the next play.';
   else if (s.current_letter) msg = s.current_letter + "'s turn.";
   status.textContent = msg;
 }
@@ -222,6 +208,12 @@ async function move(row, col) {
   const s = await api('/api/move', { method: 'POST', body: JSON.stringify({ row: row, col: col }) });
   render(s);
 }
+
+document.querySelectorAll('input[name="mode"]').forEach(function (el) {
+  el.addEventListener('change', function () {
+    document.getElementById('xoPick').classList.toggle('hidden', modeValue() !== 1);
+  });
+});
 
 document.getElementById('aiStep').addEventListener('click', async function () {
   const s = await api('/api/ai_step', { method: 'POST', body: '{}' });
@@ -273,19 +265,11 @@ def reset():
 @app.route("/api/configure", methods=["POST"])
 def configure():
     data = request.get_json(silent=True) or {}
-    try:
-        mode = int(data["mode"])
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "mode must be 1, 2, or 3"}), 400
-    if mode not in (1, 2, 3):
-        return jsonify({"error": "mode must be 1, 2, or 3"}), 400
+    mode = int(data["mode"])
 
     human_letter = None
     if mode == 1:
-        hl = (data.get("humanLetter") or data.get("human_letter") or "X").upper()
-        if hl not in ("X", "O"):
-            return jsonify({"error": "humanLetter must be X or O"}), 400
-        human_letter = hl
+        human_letter = (data.get("humanLetter") or data.get("human_letter") or "X").upper()
 
     session["mode"] = mode
     session["human_letter"] = human_letter
@@ -297,7 +281,6 @@ def configure():
 
     board = _load_board()
 
-    # Human vs AI with human as O: AI (X) opens — same as CLI after setup()
     if mode == 1 and isinstance(players[start], AIPlayer):
         _run_ai_move(board, players, start)
         _save_board(board)
@@ -310,15 +293,9 @@ def configure():
 
 @app.route("/api/move", methods=["POST"])
 def move():
-    if session.get("phase") != "playing":
-        return jsonify({"error": "start a game first"}), 400
-
     data = request.get_json(silent=True) or {}
-    try:
-        row = int(data["row"])
-        col = int(data["col"])
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "expected row and col"}), 400
+    row = int(data["row"])
+    col = int(data["col"])
 
     mode = session["mode"]
     hl = session.get("human_letter")
@@ -331,11 +308,7 @@ def move():
         return jsonify(_state())
 
     cur = players[idx]
-    if not isinstance(cur, HumanPlayer):
-        return jsonify({"error": "not human's turn"}), 400
-
-    if not board.make_move(row, col, cur.letter):
-        return jsonify({"error": "invalid move"}), 400
+    board.make_move(row, col, cur.letter)
 
     _save_board(board)
     winner = board.check_winner()
@@ -358,11 +331,6 @@ def move():
 
 @app.route("/api/ai_step", methods=["POST"])
 def ai_step():
-    if session.get("phase") != "playing":
-        return jsonify({"error": "start a game first"}), 400
-    if session.get("mode") != 2:
-        return jsonify({"error": "AI step only for AI vs AI mode"}), 400
-
     players, _ = _players_and_start(2, None)
     idx = session["current_player_index"]
     board = _load_board()
@@ -370,10 +338,6 @@ def ai_step():
     winner = board.check_winner()
     if winner in ("X", "O", "Draw"):
         return jsonify(_state())
-
-    cur = players[idx]
-    if not isinstance(cur, AIPlayer):
-        return jsonify({"error": "not an AI turn"}), 400
 
     _run_ai_move(board, players, idx)
     _save_board(board)
