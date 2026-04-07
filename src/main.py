@@ -63,11 +63,11 @@ class Game:
                 winner = self.board.check_winner()
                 if winner in ['X', 'O']:
                     self.board.display()
-                    print(f"\n🎉 {winner} wins! 🎉")
+                    print(f"\n {winner} wins!")
                     break
                 elif winner == "Draw":
                     self.board.display()
-                    print("\n🤝 It's a draw! 🤝")
+                    print("\n It's a draw!")
                     break
                 
                 # Switch players

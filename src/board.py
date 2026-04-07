@@ -90,7 +90,7 @@ class Board:
     def get_board_state(self):
         """
         Returns a deep copy of the current board grid.
-        Useful for AI algorithms that need to simulate moves.
+        Useful for AI algorithms that need to visualize moves before making them.
         """
         return [row[:] for row in self.grid]
 
