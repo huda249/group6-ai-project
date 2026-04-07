@@ -29,17 +29,12 @@ class HumanPlayer(Player):
                 print("Invalid input. Enter numbers 0-2.")
 
 class AIPlayer(Player):
-    def __init__(self, letter, difficulty='hard'):
+    def __init__(self, letter):
         super().__init__(letter)
-        self.difficulty = difficulty
     
     def get_move(self, game):
-        """AI selects move using Minimax"""
-        if self.difficulty == 'hard':
-            from minmax import MinimaxEngine
-            engine = MinimaxEngine(self.letter)
-            row, col = engine.get_best_move(game.board)
-            return (row, col)
-        else:
-            import random
-            return random.choice(game.board.get_empty_positions())
+        from minmax import MinimaxEngine
+        
+        engine = MinimaxEngine(self.letter)
+        row, col = engine.get_best_move(game.board)
+        return (row, col)
