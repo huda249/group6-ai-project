@@ -23,3 +23,13 @@ The source code is located in the `src/` directory:
 3. (Optional) If using the web demo, install required dependencies:
    ```bash
    pip install flask
+
+## Running the Program in Terminal
+To play the game in your terminal, run the following command from the root directory:
+```bash
+   python src/main.py
+## Running the Program in Web Browser
+To play the game in your web browser, run the following command from the root directory:
+```bash
+   python src/webDemo.py
+
